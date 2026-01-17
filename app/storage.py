@@ -1,5 +1,4 @@
 import datetime
-import os
 from pathlib import Path
 from typing import Iterable, Optional, List, Dict, Any
 
@@ -15,33 +14,73 @@ def ensure_data_dir() -> Path:
     return DATA_DIR
 
 
-def cached_file_path(instrument: str, timeframe: str) -> Path:
+def timeframe_dir(instrument: str, timeframe: str) -> Path:
     safe_instrument = instrument.replace("/", "")
-    return ensure_data_dir() / f"{safe_instrument}_{timeframe}.csv"
+    return ensure_data_dir() / safe_instrument / timeframe
 
 
-def save_history_to_csv(history, filepath: str) -> None:
-    """将 history（可转为 DataFrame）保存为 CSV，保留历史数据并避免覆盖。"""
+def list_partition_files(instrument: str, timeframe: str) -> List[Path]:
+    directory = timeframe_dir(instrument, timeframe)
+    if not directory.exists():
+        return []
+    return sorted(directory.glob("*.csv"))
+
+
+def _normalize_date_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "Date" in df.columns:
+        df = df.copy()
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    return df
+
+
+def _format_date_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "Date" in df.columns:
+        df = df.copy()
+        df["Date"] = df["Date"].dt.strftime("%m.%d.%Y %H:%M:%S.%f")
+    return df
+
+
+def _merge_existing(filepath: Path, df_new: pd.DataFrame) -> pd.DataFrame:
+    if filepath.exists():
+        df_old = pd.read_csv(filepath)
+        df_old = _normalize_date_column(df_old)
+        df = pd.concat([df_old, df_new], ignore_index=True)
+    else:
+        df = df_new
+    if "Date" in df.columns:
+        df = df.dropna(subset=["Date"]).drop_duplicates(subset=["Date"]).sort_values("Date")
+    return df
+
+
+def save_history_to_partitions(history, instrument: str, timeframe: str) -> List[str]:
+    """将历史数据按月分区保存为 CSV，保留历史数据并避免覆盖。"""
+    target_dir = timeframe_dir(instrument, timeframe)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    saved: List[str] = []
     try:
         df_new = pd.DataFrame(history)
-        if "Date" in df_new.columns:
-            df_new["Date"] = pd.to_datetime(df_new["Date"], errors="coerce")
-        filepath_obj = Path(filepath)
-        if filepath_obj.exists():
-            df_old = pd.read_csv(filepath_obj)
-            if "Date" in df_old.columns:
-                df_old["Date"] = pd.to_datetime(df_old["Date"], errors="coerce")
-            df = pd.concat([df_old, df_new], ignore_index=True)
-            if "Date" in df.columns:
-                df = df.drop_duplicates(subset=["Date"]).sort_values("Date")
+        df_new = _normalize_date_column(df_new)
+        if "Date" in df_new.columns and df_new["Date"].notna().any():
+            df_new = df_new.dropna(subset=["Date"])
+            df_new["Partition"] = df_new["Date"].dt.to_period("M")
+            for period, group in df_new.groupby("Partition"):
+                filename = f"{period}.csv"
+                filepath = target_dir / filename
+                df = _merge_existing(filepath, group.drop(columns=["Partition"]))
+                df = _format_date_column(df)
+                df.to_csv(filepath, index=False)
+                saved.append(str(filepath))
         else:
-            df = df_new
-        if "Date" in df.columns:
-            df["Date"] = df["Date"].dt.strftime("%m.%d.%Y %H:%M:%S.%f")
-        df.to_csv(filepath_obj, index=False)
+            filepath = target_dir / "undated.csv"
+            df = _merge_existing(filepath, df_new)
+            df = _format_date_column(df)
+            df.to_csv(filepath, index=False)
+            saved.append(str(filepath))
     except Exception:
-        # 退回到简单的 numpy 保存（保留原有行为的容错）
-        np.savetxt(filepath, history, delimiter=",", fmt="%s")
+        fallback_path = target_dir / "undated.csv"
+        np.savetxt(fallback_path, history, delimiter=",", fmt="%s")
+        saved.append(str(fallback_path))
+    return saved
 
 
 def process_timeframe(
@@ -51,22 +90,55 @@ def process_timeframe(
     start: datetime.datetime,
     end: datetime.datetime,
     out_dir: str = ".",
-) -> str:
-    """为单个时间级别获取黄金数据并保存到文件，返回文件路径。"""
+) -> List[str]:
+    """为单个时间级别获取黄金数据并保存到按月分区的文件。"""
     history = fx.get_history(instrument, timeframe, start, end)
-    filename = f"{instrument.replace('/','')}_{timeframe}.csv"
-    filepath = os.path.join(out_dir, filename)
-    save_history_to_csv(history, filepath)
-    return filepath
+    return save_history_to_partitions(history, instrument, timeframe)
 
 
-def load_history(filepath: Path) -> pd.DataFrame:
-    if not filepath.exists():
-        raise FileNotFoundError(str(filepath))
-    df = pd.read_csv(filepath)
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    return df
+def _month_keys_between(start_dt: datetime.datetime, end_dt: datetime.datetime) -> List[str]:
+    start_month = start_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end_month = end_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    keys: List[str] = []
+    current = start_month
+    while current <= end_month:
+        keys.append(f"{current.year:04d}-{current.month:02d}")
+        next_month = current.month + 1
+        year = current.year + (1 if next_month == 13 else 0)
+        month = 1 if next_month == 13 else next_month
+        current = current.replace(year=year, month=month)
+    return keys
+
+
+def select_partition_files(
+    instrument: str, timeframe: str, start: Optional[str], end: Optional[str]
+) -> List[Path]:
+    files = list_partition_files(instrument, timeframe)
+    if not files or start is None or end is None:
+        return files
+    start_dt = parse_datetime(start)
+    end_dt = parse_datetime(end)
+    month_keys = set(_month_keys_between(start_dt, end_dt))
+    selected: List[Path] = []
+    for filepath in files:
+        if filepath.stem in month_keys:
+            selected.append(filepath)
+    return selected
+
+
+def load_history(paths: Iterable[Path]) -> pd.DataFrame:
+    paths = list(paths)
+    if not paths:
+        raise FileNotFoundError("No cache files found")
+    frames = []
+    for filepath in paths:
+        df = pd.read_csv(filepath)
+        df = _normalize_date_column(df)
+        frames.append(df)
+    combined = pd.concat(frames, ignore_index=True)
+    if "Date" in combined.columns:
+        combined = combined.dropna(subset=["Date"]).drop_duplicates(subset=["Date"]).sort_values("Date")
+    return combined
 
 
 def filter_history(df: pd.DataFrame, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
@@ -125,18 +197,21 @@ def normalize_candles(df: pd.DataFrame) -> List[Dict[str, Any]]:
 def cache_summary(instrument: str, timeframes: Iterable[str]) -> List[Dict[str, Any]]:
     summary: List[Dict[str, Any]] = []
     for timeframe in timeframes:
-        filepath = cached_file_path(instrument, timeframe)
-        if filepath.exists():
-            df = load_history(filepath)
+        files = list_partition_files(instrument, timeframe)
+        if files:
+            df = load_history(files)
+            last_modified = max(
+                datetime.datetime.fromtimestamp(path.stat().st_mtime, tz=datetime.timezone.utc)
+                for path in files
+            )
             summary.append(
                 {
                     "timeframe": timeframe,
                     "cached": True,
                     "rows": int(len(df)),
-                    "last_modified": datetime.datetime.fromtimestamp(
-                        filepath.stat().st_mtime, tz=datetime.timezone.utc
-                    ).isoformat(),
-                    "path": str(filepath),
+                    "last_modified": last_modified.isoformat(),
+                    "partitions": len(files),
+                    "path": str(timeframe_dir(instrument, timeframe)),
                 }
             )
         else:
@@ -146,7 +221,8 @@ def cache_summary(instrument: str, timeframes: Iterable[str]) -> List[Dict[str, 
                     "cached": False,
                     "rows": 0,
                     "last_modified": None,
-                    "path": str(filepath),
+                    "partitions": 0,
+                    "path": str(timeframe_dir(instrument, timeframe)),
                 }
             )
     return summary

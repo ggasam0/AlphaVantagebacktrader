@@ -21,19 +21,21 @@ function formatTimestamp(value) {
 export default function App() {
   const [instrument, setInstrument] = useState(DEFAULT_INSTRUMENT);
   const [cacheStatus, setCacheStatus] = useState([]);
-  const [selectedTimeframe, setSelectedTimeframe] = useState("m5");
+  const [selectedTimeframe, setSelectedTimeframe] = useState("m1");
   const [candles, setCandles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [downloadStatus, setDownloadStatus] = useState("");
+  const [autoDownloadStatus, setAutoDownloadStatus] = useState("");
 
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
 
-  const timeframes = useMemo(() => cacheStatus.map((item) => item.timeframe), [cacheStatus]);
+  const timeframes = useMemo(() => ["m1", "H1"], []);
+  const autoDownloadRef = useRef({ inFlight: false, lastKey: "" });
   const selectedCache = useMemo(
     () => cacheStatus.find((item) => item.timeframe === selectedTimeframe),
     [cacheStatus, selectedTimeframe],
@@ -46,7 +48,9 @@ export default function App() {
         const data = await fetchCacheStatus(instrument);
         setCacheStatus(data.timeframes ?? []);
         if (data.timeframes?.length) {
-          setSelectedTimeframe((prev) => prev || data.timeframes[0].timeframe);
+          setSelectedTimeframe((prev) =>
+            prev && timeframes.includes(prev) ? prev : data.timeframes[0].timeframe,
+          );
         }
       } catch (err) {
         setError(err.message);
@@ -54,7 +58,7 @@ export default function App() {
     }
 
     loadCache();
-  }, [instrument]);
+  }, [instrument, timeframes]);
 
   useEffect(() => {
     if (!chartContainerRef.current) {
@@ -63,17 +67,21 @@ export default function App() {
     if (!chartRef.current) {
       chartRef.current = createChart(chartContainerRef.current, {
         height: 420,
-        layout: { background: { color: "#0f172a" }, textColor: "#e2e8f0" },
-        grid: { vertLines: { color: "#1e293b" }, horzLines: { color: "#1e293b" } },
-        rightPriceScale: { borderColor: "#334155" },
-        timeScale: { borderColor: "#334155" },
+        layout: { background: { color: "#0b0f13" }, textColor: "#cbd5f5" },
+        grid: { vertLines: { color: "#1c2533" }, horzLines: { color: "#1c2533" } },
+        rightPriceScale: { borderColor: "#1f2a37" },
+        timeScale: { borderColor: "#1f2a37", timeVisible: true, secondsVisible: true },
+        crosshair: {
+          vertLine: { color: "#38bdf8", style: 1, width: 1, labelBackgroundColor: "#0b0f13" },
+          horzLine: { color: "#38bdf8", style: 1, width: 1, labelBackgroundColor: "#0b0f13" },
+        },
       });
       seriesRef.current = chartRef.current.addCandlestickSeries({
-        upColor: "#22c55e",
-        downColor: "#ef4444",
+        upColor: "#33d17a",
+        downColor: "#ff6b6b",
         borderVisible: false,
-        wickUpColor: "#22c55e",
-        wickDownColor: "#ef4444",
+        wickUpColor: "#33d17a",
+        wickDownColor: "#ff6b6b",
       });
     }
     return () => {
@@ -122,10 +130,96 @@ export default function App() {
     }
   }, [candles]);
 
+  const dataRange = useMemo(() => {
+    if (!candles.length) {
+      return null;
+    }
+    return candles.reduce(
+      (acc, candle) => {
+        const time = typeof candle.time === "number" ? candle.time : null;
+        if (!time) {
+          return acc;
+        }
+        if (!acc) {
+          return { min: time, max: time };
+        }
+        return { min: Math.min(acc.min, time), max: Math.max(acc.max, time) };
+      },
+      null,
+    );
+  }, [candles]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) {
+      return undefined;
+    }
+    const timeScale = chart.timeScale();
+    const handleVisibleRangeChange = async (range) => {
+      if (!range || !dataRange || !selectedTimeframe) {
+        return;
+      }
+      const from = Math.floor(range.from ?? 0);
+      const to = Math.ceil(range.to ?? 0);
+      if (!from || !to) {
+        return;
+      }
+      const missingStart = from < dataRange.min ? from : null;
+      const missingEnd = to > dataRange.max ? to : null;
+      if (missingStart === null && missingEnd === null) {
+        return;
+      }
+      if (autoDownloadRef.current.inFlight) {
+        return;
+      }
+      const startIso = missingStart ? new Date(missingStart * 1000).toISOString() : null;
+      const endIso = missingEnd ? new Date(missingEnd * 1000).toISOString() : null;
+      const key = `${selectedTimeframe}-${startIso ?? ""}-${endIso ?? ""}`;
+      if (autoDownloadRef.current.lastKey === key) {
+        return;
+      }
+      autoDownloadRef.current.inFlight = true;
+      autoDownloadRef.current.lastKey = key;
+      setAutoDownloadStatus("检测到可视范围超出缓存，正在自动补齐数据…");
+      try {
+        await triggerDownload({
+          instrument,
+          timeframes: [selectedTimeframe],
+          start: startIso,
+          end: endIso,
+        });
+        const fetchStart = new Date(Math.min(from, dataRange.min) * 1000).toISOString();
+        const fetchEnd = new Date(Math.max(to, dataRange.max) * 1000).toISOString();
+        const data = await fetchCandles(selectedTimeframe, instrument, {
+          start: fetchStart,
+          end: fetchEnd,
+        });
+        const normalized = (data.candles ?? [])
+          .map((item) => ({
+            ...item,
+            time: formatTimestamp(item.time) ?? item.time,
+          }))
+          .filter((item) => item.time);
+        setCandles(normalized);
+        setAutoDownloadStatus("自动补齐完成，已更新图表。");
+      } catch (err) {
+        setError(err.message);
+        setAutoDownloadStatus("");
+      } finally {
+        autoDownloadRef.current.inFlight = false;
+      }
+    };
+    timeScale.subscribeVisibleTimeRangeChange(handleVisibleRangeChange);
+    return () => {
+      timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleRangeChange);
+    };
+  }, [dataRange, instrument, selectedTimeframe]);
+
   async function handleDownload() {
     try {
       setDownloadStatus("");
       setError("");
+      setAutoDownloadStatus("");
       const missingTimeframes = cacheStatus
         .filter((item) => !item.cached)
         .map((item) => item.timeframe);
@@ -174,14 +268,55 @@ export default function App() {
     <div className="page">
       <header className="header">
         <div>
-          <h1>黄金数据缓存管理</h1>
-          <p>管理 m5 / H1 的缓存数据，并预览不同周期的K线图。</p>
+          <h1>MT4 风格黄金终端</h1>
+          <p>仅支持 M1 / H1。数据按月分区存储，拖拽图表自动补齐缺失区间。</p>
         </div>
         <div className="instrument">
           <label>品种</label>
           <input value={instrument} onChange={(event) => setInstrument(event.target.value)} />
         </div>
       </header>
+
+      <section className="panel toolbar">
+        <div className="toolbar-left">
+          <div className="timeframe-tabs">
+            {timeframes.map((tf) => (
+              <button
+                key={tf}
+                type="button"
+                className={`tab ${selectedTimeframe === tf ? "active" : ""}`}
+                onClick={() => setSelectedTimeframe(tf)}
+              >
+                {tf.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <div className="toolbar-note">手动选择预览时间范围后点击下载。</div>
+        </div>
+        <div className="controls">
+          <label>
+            开始时间
+            <input
+              type="datetime-local"
+              step="1"
+              value={start}
+              onChange={(event) => setStart(event.target.value)}
+            />
+          </label>
+          <label>
+            结束时间
+            <input
+              type="datetime-local"
+              step="1"
+              value={end}
+              onChange={(event) => setEnd(event.target.value)}
+            />
+          </label>
+          <button type="button" className="primary" onClick={handleDownload}>
+            下载并刷新缓存
+          </button>
+        </div>
+      </section>
 
       <section className="panel">
         <h2>缓存状态</h2>
@@ -193,10 +328,11 @@ export default function App() {
               className={`cache-card ${selectedTimeframe === item.timeframe ? "active" : ""}`}
               onClick={() => setSelectedTimeframe(item.timeframe)}
             >
-              <div className="cache-title">{item.timeframe}</div>
+              <div className="cache-title">{item.timeframe.toUpperCase()}</div>
               <div className={`cache-badge ${item.cached ? "cached" : "missing"}`}>
                 {item.cached ? "已缓存" : "未缓存"}
               </div>
+              <div className="cache-meta">分区：{item.partitions ?? 0} 个月</div>
               <div className="cache-meta">行数：{item.rows}</div>
               <div className="cache-meta">更新：{item.last_modified ?? "-"}</div>
             </button>
@@ -207,28 +343,8 @@ export default function App() {
       <section className="panel">
         <div className="panel-header">
           <h2>K线预览</h2>
-          <div className="controls">
-            <label>
-              开始时间
-              <input
-                type="datetime-local"
-                step="1"
-                value={start}
-                onChange={(event) => setStart(event.target.value)}
-              />
-            </label>
-            <label>
-              结束时间
-              <input
-                type="datetime-local"
-                step="1"
-                value={end}
-                onChange={(event) => setEnd(event.target.value)}
-              />
-            </label>
-            <button type="button" className="primary" onClick={handleDownload}>
-              下载并刷新缓存
-            </button>
+          <div className="panel-status">
+            {autoDownloadStatus && <span>{autoDownloadStatus}</span>}
           </div>
         </div>
 
