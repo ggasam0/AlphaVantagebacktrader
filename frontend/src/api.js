@@ -10,14 +10,20 @@ export async function fetchCacheStatus(instrument) {
   return response.json();
 }
 
-export async function fetchCandles(timeframe, instrument) {
-  const url = new URL(`/api/data/${timeframe}`, window.location.origin);
+export async function fetchCandles(timeframe, instrument, { start, end } = {}) {
+  const url = new URL(`/api/preview/${timeframe}`, window.location.origin);
   if (instrument) {
     url.searchParams.set("instrument", instrument);
   }
+  if (start) {
+    url.searchParams.set("start", start);
+  }
+  if (end) {
+    url.searchParams.set("end", end);
+  }
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error("无法获取K线数据");
+    throw new Error("无法获取K线预览数据");
   }
   return response.json();
 }

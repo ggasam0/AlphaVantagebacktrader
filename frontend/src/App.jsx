@@ -34,6 +34,10 @@ export default function App() {
   const seriesRef = useRef(null);
 
   const timeframes = useMemo(() => cacheStatus.map((item) => item.timeframe), [cacheStatus]);
+  const selectedCache = useMemo(
+    () => cacheStatus.find((item) => item.timeframe === selectedTimeframe),
+    [cacheStatus, selectedTimeframe],
+  );
 
   useEffect(() => {
     async function loadCache() {
@@ -84,6 +88,12 @@ export default function App() {
       if (!selectedTimeframe) {
         return;
       }
+      if (!selectedCache?.cached) {
+        setCandles([]);
+        setLoading(false);
+        setError("缓存未下载，请先下载后再预览。");
+        return;
+      }
       try {
         setLoading(true);
         setError("");
@@ -104,7 +114,7 @@ export default function App() {
     }
 
     loadCandles();
-  }, [selectedTimeframe, instrument]);
+  }, [selectedTimeframe, instrument, selectedCache]);
 
   useEffect(() => {
     if (seriesRef.current) {
@@ -122,10 +132,25 @@ export default function App() {
         start: start || null,
         end: end || null,
       };
-      await triggerDownload(payload);
-      setDownloadStatus("下载完成，缓存已更新。");
-      const data = await fetchCacheStatus(instrument);
-      setCacheStatus(data.timeframes ?? []);
+      if (!selectedCache?.cached) {
+        await triggerDownload(payload);
+        setDownloadStatus("下载完成，缓存已更新。");
+        const data = await fetchCacheStatus(instrument);
+        setCacheStatus(data.timeframes ?? []);
+      } else {
+        setDownloadStatus("缓存已存在，已直接预览。");
+      }
+      const data = await fetchCandles(selectedTimeframe, instrument, {
+        start: start || null,
+        end: end || null,
+      });
+      const normalized = (data.candles ?? [])
+        .map((item) => ({
+          ...item,
+          time: formatTimestamp(item.time) ?? item.time,
+        }))
+        .filter((item) => item.time);
+      setCandles(normalized);
     } catch (err) {
       setError(err.message);
     }
