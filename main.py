@@ -227,18 +227,29 @@ class ForexSessionManager:
         self.fx = None
 
     def login(self):
+        if self.fx:
+            return self.fx
         user_name, password = get_credentials()
         if not user_name or not password:
             raise RuntimeError("Missing credentials")
         from forexconnect import ForexConnect
-        self.fx = ForexConnect()
-        self.fx.login(
-            user_name,
-            password,
-            "fxcorporate.com/Hosts.jsp",
-            "Real",
-            session_status_callback=session_status_changed,
-        )
+        fx = ForexConnect()
+        try:
+            fx.login(
+                user_name,
+                password,
+                "fxcorporate.com/Hosts.jsp",
+                "Real",
+                session_status_callback=session_status_changed,
+            )
+        except Exception as exc:
+            try:
+                fx.logout()
+            except Exception:
+                pass
+            raise RuntimeError(f"ForexConnect login failed: {exc}") from exc
+        self.fx = fx
+        return self.fx
 
     def logout(self):
         if self.fx:
@@ -248,9 +259,9 @@ class ForexSessionManager:
                 self.fx = None
 
     def require_session(self):
-        if not self.fx:
-            raise RuntimeError("ForexConnect session is not initialized")
-        return self.fx
+        if self.fx:
+            return self.fx
+        return self.login()
 
 
 forex_session = ForexSessionManager()
@@ -258,7 +269,10 @@ forex_session = ForexSessionManager()
 
 @app.on_event("startup")
 def startup_event():
-    forex_session.login()
+    try:
+        forex_session.login()
+    except RuntimeError as exc:
+        print(f"Startup forex login skipped: {exc}")
 
 
 @app.on_event("shutdown")
@@ -317,7 +331,7 @@ def api_download(payload: DownloadRequest):
     try:
         fx = forex_session.require_session()
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc))
     for tf in payload.timeframes:
         if tf not in SUPPORTED_TIMEFRAMES:
             continue
