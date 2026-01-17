@@ -221,13 +221,31 @@ body {
   color: #94a3b8;
 }
 
-.controls input {
+.controls input,
+.week-select select {
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid #1f2a37;
   background: #0b0f13;
   color: #e2e8f0;
   min-width: 190px;
+}
+
+.helper-text {
+  font-size: 11px;
+  color: #7c8aa5;
+}
+
+.week-select {
+  margin-top: 12px;
+}
+
+.week-select label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .week-actions {

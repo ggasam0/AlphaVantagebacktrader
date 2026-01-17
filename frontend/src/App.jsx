@@ -27,6 +27,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  const [startWeek, setStartWeek] = useState("");
+  const [endWeek, setEndWeek] = useState("");
   const [downloadStatus, setDownloadStatus] = useState("");
   const [weekList, setWeekList] = useState([]);
   const [selectedWeek, setSelectedWeek] = useState(null);
@@ -40,6 +42,43 @@ export default function App() {
     () => cacheStatus.find((item) => item.timeframe === selectedTimeframe),
     [cacheStatus, selectedTimeframe],
   );
+  const weekOptions = useMemo(
+    () =>
+      weekList.map((week) => ({
+        ...week,
+        mondayLabel: week.start ? week.start.split("T")[0] : "",
+      })),
+    [weekList],
+  );
+  const startWeekLabel = useMemo(
+    () => weekValueToRange(startWeek)?.mondayLabel ?? "",
+    [startWeek],
+  );
+  const endWeekLabel = useMemo(() => weekValueToRange(endWeek)?.mondayLabel ?? "", [endWeek]);
+
+  function weekValueToRange(weekValue) {
+    if (!weekValue) {
+      return null;
+    }
+    const [yearPart, weekPart] = weekValue.split("-W");
+    const year = Number(yearPart);
+    const week = Number(weekPart);
+    if (!year || !week) {
+      return null;
+    }
+    const jan4 = new Date(Date.UTC(year, 0, 4));
+    const jan4Day = jan4.getUTCDay() || 7;
+    const monday = new Date(jan4);
+    monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1) + (week - 1) * 7);
+    const endDate = new Date(monday);
+    endDate.setUTCDate(monday.getUTCDate() + 6);
+    endDate.setUTCHours(23, 59, 59, 0);
+    return {
+      startIso: monday.toISOString().slice(0, 19),
+      endIso: endDate.toISOString().slice(0, 19),
+      mondayLabel: monday.toISOString().slice(0, 10),
+    };
+  }
 
   useEffect(() => {
     async function loadCache() {
@@ -95,6 +134,18 @@ export default function App() {
     setCandles([]);
     setSelectedWeek(null);
   }, [selectedTimeframe, instrument]);
+
+  useEffect(() => {
+    const startRange = weekValueToRange(startWeek);
+    const endRange = weekValueToRange(endWeek);
+    if (startRange && endRange) {
+      setStart(startRange.startIso);
+      setEnd(endRange.endIso);
+    } else {
+      setStart("");
+      setEnd("");
+    }
+  }, [startWeek, endWeek]);
 
   useEffect(() => {
     if (seriesRef.current) {
@@ -218,22 +269,18 @@ export default function App() {
         </div>
         <div className="controls">
           <label>
-            周列表开始时间
-            <input
-              type="datetime-local"
-              step="1"
-              value={start}
-              onChange={(event) => setStart(event.target.value)}
-            />
+            周列表开始周
+            <input type="week" value={startWeek} onChange={(event) => setStartWeek(event.target.value)} />
+            <span className="helper-text">
+              {startWeekLabel ? `周一: ${startWeekLabel}` : "请选择开始周"}
+            </span>
           </label>
           <label>
-            周列表结束时间
-            <input
-              type="datetime-local"
-              step="1"
-              value={end}
-              onChange={(event) => setEnd(event.target.value)}
-            />
+            周列表结束周
+            <input type="week" value={endWeek} onChange={(event) => setEndWeek(event.target.value)} />
+            <span className="helper-text">
+              {endWeekLabel ? `周一: ${endWeekLabel}` : "请选择结束周"}
+            </span>
           </label>
         </div>
       </section>
@@ -262,7 +309,7 @@ export default function App() {
 
       <section className="panel">
         <div className="panel-header">
-          <h2>周数据列表</h2>
+          <h2>下载管理（周数据列表）</h2>
           <div className="panel-status">
             {selectedWeek ? (
               <span>
@@ -272,6 +319,25 @@ export default function App() {
               <span>请选择要操作的周区间。</span>
             )}
           </div>
+        </div>
+        <div className="week-select">
+          <label>
+            直接选择周（周一代表该周）
+            <select
+              value={selectedWeek?.key ?? ""}
+              onChange={(event) => {
+                const target = weekList.find((week) => week.key === event.target.value);
+                setSelectedWeek(target ?? null);
+              }}
+            >
+              <option value="">请选择周</option>
+              {weekOptions.map((week) => (
+                <option key={week.key} value={week.key}>
+                  {week.key}（周一 {week.mondayLabel}）
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="week-grid">
           {weekList.length === 0 && <div className="empty-state">暂无周数据列表。</div>}
@@ -287,7 +353,7 @@ export default function App() {
                 {week.cached ? "已下载" : "未下载"}
               </div>
               <div className="cache-meta">
-                {week.start} - {week.end}
+                周一：{week.start?.split("T")[0]}｜{week.start} - {week.end}
               </div>
             </button>
           ))}
