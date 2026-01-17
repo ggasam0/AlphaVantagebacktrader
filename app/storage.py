@@ -52,8 +52,18 @@ def _merge_existing(filepath: Path, df_new: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _week_start(dt: datetime.datetime) -> datetime.datetime:
+    start = dt - datetime.timedelta(days=dt.weekday())
+    return start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _week_key(dt: datetime.datetime) -> str:
+    iso = dt.isocalendar()
+    return f"{iso.year:04d}-W{iso.week:02d}"
+
+
 def save_history_to_partitions(history, instrument: str, timeframe: str) -> List[str]:
-    """将历史数据按月分区保存为 CSV，保留历史数据并避免覆盖。"""
+    """将历史数据按周分区保存为 CSV，保留历史数据并避免覆盖。"""
     target_dir = timeframe_dir(instrument, timeframe)
     target_dir.mkdir(parents=True, exist_ok=True)
     saved: List[str] = []
@@ -62,9 +72,9 @@ def save_history_to_partitions(history, instrument: str, timeframe: str) -> List
         df_new = _normalize_date_column(df_new)
         if "Date" in df_new.columns and df_new["Date"].notna().any():
             df_new = df_new.dropna(subset=["Date"])
-            df_new["Partition"] = df_new["Date"].dt.to_period("M")
-            for period, group in df_new.groupby("Partition"):
-                filename = f"{period}.csv"
+            df_new["Partition"] = df_new["Date"].apply(_week_key)
+            for week_key, group in df_new.groupby("Partition"):
+                filename = f"{week_key}.csv"
                 filepath = target_dir / filename
                 df = _merge_existing(filepath, group.drop(columns=["Partition"]))
                 df = _format_date_column(df)
@@ -91,22 +101,19 @@ def process_timeframe(
     end: datetime.datetime,
     out_dir: str = ".",
 ) -> List[str]:
-    """为单个时间级别获取黄金数据并保存到按月分区的文件。"""
+    """为单个时间级别获取黄金数据并保存到按周分区的文件。"""
     history = fx.get_history(instrument, timeframe, start, end)
     return save_history_to_partitions(history, instrument, timeframe)
 
 
-def _month_keys_between(start_dt: datetime.datetime, end_dt: datetime.datetime) -> List[str]:
-    start_month = start_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    end_month = end_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+def _week_keys_between(start_dt: datetime.datetime, end_dt: datetime.datetime) -> List[str]:
+    start_week = _week_start(start_dt)
+    end_week = _week_start(end_dt)
     keys: List[str] = []
-    current = start_month
-    while current <= end_month:
-        keys.append(f"{current.year:04d}-{current.month:02d}")
-        next_month = current.month + 1
-        year = current.year + (1 if next_month == 13 else 0)
-        month = 1 if next_month == 13 else next_month
-        current = current.replace(year=year, month=month)
+    current = start_week
+    while current <= end_week:
+        keys.append(_week_key(current))
+        current = current + datetime.timedelta(days=7)
     return keys
 
 
@@ -118,12 +125,45 @@ def select_partition_files(
         return files
     start_dt = parse_datetime(start)
     end_dt = parse_datetime(end)
-    month_keys = set(_month_keys_between(start_dt, end_dt))
+    week_keys = set(_week_keys_between(start_dt, end_dt))
     selected: List[Path] = []
     for filepath in files:
-        if filepath.stem in month_keys:
+        if filepath.stem in week_keys:
             selected.append(filepath)
     return selected
+
+
+def list_week_partitions(
+    instrument: str,
+    timeframe: str,
+    start: Optional[str],
+    end: Optional[str],
+    weeks: int = 8,
+) -> List[Dict[str, Any]]:
+    files = list_partition_files(instrument, timeframe)
+    existing = {path.stem for path in files}
+    if start and end:
+        start_dt = parse_datetime(start)
+        end_dt = parse_datetime(end)
+    else:
+        end_dt = datetime.datetime.now()
+        start_dt = end_dt - datetime.timedelta(weeks=weeks)
+    week_keys = _week_keys_between(start_dt, end_dt)
+    partitions: List[Dict[str, Any]] = []
+    for key in week_keys:
+        year, week = key.split("-W")
+        monday = datetime.date.fromisocalendar(int(year), int(week), 1)
+        start_week = datetime.datetime.combine(monday, datetime.time.min)
+        end_week = start_week + datetime.timedelta(days=7) - datetime.timedelta(seconds=1)
+        partitions.append(
+            {
+                "key": key,
+                "start": start_week.isoformat(),
+                "end": end_week.isoformat(),
+                "cached": key in existing,
+            }
+        )
+    return partitions
 
 
 def load_history(paths: Iterable[Path]) -> pd.DataFrame:
