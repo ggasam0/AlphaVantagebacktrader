@@ -36,13 +36,24 @@ def fetch_history(
 
 
 def save_history_to_csv(history, filepath: str):
-    """将 history（可转为 DataFrame）保存为 CSV。"""
+    """将 history（可转为 DataFrame）保存为 CSV，保留历史数据并避免覆盖。"""
     try:
-        df = pd.DataFrame(history)
-        # 确保 Date 列为可读的字符串格式
-        if 'Date' in df.columns:
-            df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%m.%d.%Y %H:%M:%S.%f')
-        df.to_csv(filepath, index=False)
+        df_new = pd.DataFrame(history)
+        if "Date" in df_new.columns:
+            df_new["Date"] = pd.to_datetime(df_new["Date"], errors="coerce")
+        filepath_obj = Path(filepath)
+        if filepath_obj.exists():
+            df_old = pd.read_csv(filepath_obj)
+            if "Date" in df_old.columns:
+                df_old["Date"] = pd.to_datetime(df_old["Date"], errors="coerce")
+            df = pd.concat([df_old, df_new], ignore_index=True)
+            if "Date" in df.columns:
+                df = df.drop_duplicates(subset=["Date"]).sort_values("Date")
+        else:
+            df = df_new
+        if "Date" in df.columns:
+            df["Date"] = df["Date"].dt.strftime("%m.%d.%Y %H:%M:%S.%f")
+        df.to_csv(filepath_obj, index=False)
     except Exception:
         # 退回到简单的 numpy 保存（保留原有行为的容错）
         np.savetxt(filepath, history, delimiter=',', fmt='%s')
@@ -112,6 +123,19 @@ def load_history(filepath: Path) -> pd.DataFrame:
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     return df
+
+
+def filter_history(df: pd.DataFrame, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
+    if "Date" not in df.columns or (start is None and end is None):
+        return df
+    start_dt = parse_datetime(start) if start else None
+    end_dt = parse_datetime(end) if end else None
+    filtered = df
+    if start_dt is not None:
+        filtered = filtered[filtered["Date"] >= start_dt]
+    if end_dt is not None:
+        filtered = filtered[filtered["Date"] <= end_dt]
+    return filtered
 
 
 def normalize_candles(df: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -198,6 +222,50 @@ class DownloadResponse(BaseModel):
 app = FastAPI(title="Gold Data Cache API")
 
 
+class ForexSessionManager:
+    def __init__(self):
+        self.fx = None
+
+    def login(self):
+        user_name, password = get_credentials()
+        if not user_name or not password:
+            raise RuntimeError("Missing credentials")
+        from forexconnect import ForexConnect
+        self.fx = ForexConnect()
+        self.fx.login(
+            user_name,
+            password,
+            "fxcorporate.com/Hosts.jsp",
+            "Real",
+            session_status_callback=session_status_changed,
+        )
+
+    def logout(self):
+        if self.fx:
+            try:
+                self.fx.logout()
+            finally:
+                self.fx = None
+
+    def require_session(self):
+        if not self.fx:
+            raise RuntimeError("ForexConnect session is not initialized")
+        return self.fx
+
+
+forex_session = ForexSessionManager()
+
+
+@app.on_event("startup")
+def startup_event():
+    forex_session.login()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    forex_session.logout()
+
+
 @app.get("/api/cache")
 def api_cache(instrument: str = DEFAULT_INSTRUMENT):
     return {"instrument": instrument, "timeframes": cache_summary(instrument, SUPPORTED_TIMEFRAMES)}
@@ -215,11 +283,26 @@ def api_data(timeframe: str, instrument: str = DEFAULT_INSTRUMENT):
     return {"instrument": instrument, "timeframe": timeframe, "candles": candles}
 
 
+@app.get("/api/preview/{timeframe}")
+def api_preview(
+    timeframe: str,
+    instrument: str = DEFAULT_INSTRUMENT,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+):
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        raise HTTPException(status_code=400, detail="Unsupported timeframe")
+    filepath = cached_file_path(instrument, timeframe)
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Cache not found")
+    df = load_history(filepath)
+    df = filter_history(df, start, end)
+    candles = normalize_candles(df)
+    return {"instrument": instrument, "timeframe": timeframe, "candles": candles}
+
+
 @app.post("/api/download", response_model=DownloadResponse)
 def api_download(payload: DownloadRequest):
-    user_name, password = get_credentials()
-    if not user_name or not password:
-        raise HTTPException(status_code=400, detail="Missing credentials")
     start = (
         parse_datetime(payload.start).replace(tzinfo=datetime.timezone.utc)
         if payload.start
@@ -231,22 +314,15 @@ def api_download(payload: DownloadRequest):
         else datetime.datetime.now(tz=datetime.timezone.utc)
     )
     saved = []
-    from forexconnect import ForexConnect
-
-    with ForexConnect() as fx:
-        fx.login(
-            user_name,
-            password,
-            "fxcorporate.com/Hosts.jsp",
-            "Real",
-            session_status_callback=session_status_changed,
-        )
-        for tf in payload.timeframes:
-            if tf not in SUPPORTED_TIMEFRAMES:
-                continue
-            path = process_timeframe(fx, payload.instrument, tf, start, end, out_dir=str(ensure_data_dir()))
-            saved.append({"timeframe": tf, "path": path})
-        fx.logout()
+    try:
+        fx = forex_session.require_session()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    for tf in payload.timeframes:
+        if tf not in SUPPORTED_TIMEFRAMES:
+            continue
+        path = process_timeframe(fx, payload.instrument, tf, start, end, out_dir=str(ensure_data_dir()))
+        saved.append({"timeframe": tf, "path": path})
     return DownloadResponse(saved=saved)
 
 
