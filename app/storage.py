@@ -67,6 +67,15 @@ def _week_key(dt: datetime.datetime) -> str:
     return f"{year:04d}-W{week:02d}"
 
 
+def _fromisocalendar(year: int, week: int, day: int) -> datetime.date:
+    try:
+        return datetime.date.fromisocalendar(year, week, day)
+    except AttributeError:
+        jan4 = datetime.date(year, 1, 4)
+        start = jan4 - datetime.timedelta(days=jan4.isoweekday() - 1)
+        return start + datetime.timedelta(weeks=week - 1, days=day - 1)
+
+
 def save_history_to_partitions(history, instrument: str, timeframe: str) -> List[str]:
     """将历史数据按周分区保存为 CSV，保留历史数据并避免覆盖。"""
     target_dir = timeframe_dir(instrument, timeframe)
@@ -131,7 +140,7 @@ def list_week_options(weeks: int = 60) -> List[Dict[str, str]]:
     options: List[Dict[str, str]] = []
     for key in week_keys:
         year, week = key.split("-W")
-        monday = datetime.date.fromisocalendar(int(year), int(week), 1)
+        monday = _fromisocalendar(int(year), int(week), 1)
         options.append(
             {
                 "key": key,
@@ -179,7 +188,7 @@ def list_week_partitions(
     partitions: List[Dict[str, Any]] = []
     for key in week_keys:
         year, week = key.split("-W")
-        monday = datetime.date.fromisocalendar(int(year), int(week), 1)
+        monday = _fromisocalendar(int(year), int(week), 1)
         start_week = datetime.datetime.combine(monday, datetime.time.min)
         end_week = start_week + datetime.timedelta(days=7) - datetime.timedelta(seconds=1)
         partitions.append(
