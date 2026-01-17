@@ -16,6 +16,7 @@ from app.storage import (
     ensure_data_dir,
     list_partition_files,
     list_week_partitions,
+    list_week_options,
 )
 from app.time_utils import parse_datetime
 
@@ -68,6 +69,21 @@ def api_weeks(
         raise HTTPException(status_code=400, detail="Unsupported timeframe")
     weeks = list_week_partitions(instrument, timeframe, start, end)
     return {"instrument": instrument, "timeframe": timeframe, "weeks": weeks}
+
+
+@app.get("/api/week-options/{timeframe}")
+def api_week_options(
+    timeframe: str,
+    instrument: str = DEFAULT_INSTRUMENT,
+    weeks: int = 60,
+):
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        raise HTTPException(status_code=400, detail="Unsupported timeframe")
+    return {
+        "instrument": instrument,
+        "timeframe": timeframe,
+        "weeks": list_week_options(weeks),
+    }
 
 
 @app.post("/api/download", response_model=DownloadResponse)

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createChart } from "lightweight-charts";
-import { fetchCacheStatus, fetchCandles, fetchWeeks, triggerDownload } from "./api.js";
+import { fetchCacheStatus, fetchCandles, fetchWeekOptions, fetchWeeks, triggerDownload } from "./api.js";
 
 const DEFAULT_INSTRUMENT = "XAU/USD";
 
@@ -32,6 +32,7 @@ export default function App() {
   const [downloadStatus, setDownloadStatus] = useState("");
   const [weekList, setWeekList] = useState([]);
   const [selectedWeek, setSelectedWeek] = useState(null);
+  const [weekOptionsCatalog, setWeekOptionsCatalog] = useState([]);
 
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -51,35 +52,36 @@ export default function App() {
     [weekList],
   );
   const startWeekLabel = useMemo(
-    () => weekValueToRange(startWeek)?.mondayLabel ?? "",
-    [startWeek],
+    () => weekValueToRange(startWeek, weekOptionsCatalog)?.mondayLabel ?? "",
+    [startWeek, weekOptionsCatalog],
   );
-  const endWeekLabel = useMemo(() => weekValueToRange(endWeek)?.mondayLabel ?? "", [endWeek]);
+  const endWeekLabel = useMemo(
+    () => weekValueToRange(endWeek, weekOptionsCatalog)?.mondayLabel ?? "",
+    [endWeek, weekOptionsCatalog],
+  );
 
-  function weekValueToRange(weekValue) {
+  function weekValueToRange(weekValue, catalog) {
     if (!weekValue) {
       return null;
     }
-    const match = weekValue.match(/^(\d{4})-W?(\d{1,2})$/i);
+    if (!catalog?.length) {
+      return null;
+    }
+    const match = catalog.find((item) => item.value === weekValue || item.key === weekValue);
     if (!match) {
       return null;
     }
-    const year = Number(match[1]);
-    const week = Number(match[2]);
-    if (!year || !week || week < 1 || week > 53) {
+    const monday = new Date(`${match.monday}T00:00:00Z`);
+    if (Number.isNaN(monday.getTime())) {
       return null;
     }
-    const jan4 = new Date(Date.UTC(year, 0, 4));
-    const jan4Day = jan4.getUTCDay() || 7;
-    const monday = new Date(jan4);
-    monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1) + (week - 1) * 7);
     const endDate = new Date(monday);
     endDate.setUTCDate(monday.getUTCDate() + 6);
     endDate.setUTCHours(23, 59, 59, 0);
     return {
       startIso: monday.toISOString().slice(0, 19),
       endIso: endDate.toISOString().slice(0, 19),
-      mondayLabel: monday.toISOString().slice(0, 10),
+      mondayLabel: match.monday,
     };
   }
 
@@ -139,8 +141,8 @@ export default function App() {
   }, [selectedTimeframe, instrument]);
 
   useEffect(() => {
-    const startRange = weekValueToRange(startWeek);
-    const endRange = weekValueToRange(endWeek);
+    const startRange = weekValueToRange(startWeek, weekOptionsCatalog);
+    const endRange = weekValueToRange(endWeek, weekOptionsCatalog);
     if (startRange && endRange) {
       setStart(startRange.startIso);
       setEnd(endRange.endIso);
@@ -148,7 +150,24 @@ export default function App() {
       setStart("");
       setEnd("");
     }
-  }, [startWeek, endWeek]);
+  }, [startWeek, endWeek, weekOptionsCatalog]);
+
+  useEffect(() => {
+    async function loadWeekOptions() {
+      if (!selectedTimeframe) {
+        return;
+      }
+      try {
+        const data = await fetchWeekOptions(selectedTimeframe, instrument, { weeks: 60 });
+        setWeekOptionsCatalog(data.weeks ?? []);
+      } catch (err) {
+        setError(err.message);
+        setWeekOptionsCatalog([]);
+      }
+    }
+
+    loadWeekOptions();
+  }, [selectedTimeframe, instrument]);
 
   useEffect(() => {
     if (seriesRef.current) {
@@ -273,14 +292,36 @@ export default function App() {
         <div className="controls">
           <label>
             周列表开始周
-            <input type="week" value={startWeek} onChange={(event) => setStartWeek(event.target.value)} />
+            <select
+              value={startWeek}
+              onChange={(event) => setStartWeek(event.target.value)}
+              disabled={weekOptionsCatalog.length === 0}
+            >
+              <option value="">请选择开始周</option>
+              {weekOptionsCatalog.map((option) => (
+                <option key={option.key} value={option.value}>
+                  {option.key}（周一 {option.monday}）
+                </option>
+              ))}
+            </select>
             <span className="helper-text">
               {startWeekLabel ? `周一: ${startWeekLabel}` : "请选择开始周"}
             </span>
           </label>
           <label>
             周列表结束周
-            <input type="week" value={endWeek} onChange={(event) => setEndWeek(event.target.value)} />
+            <select
+              value={endWeek}
+              onChange={(event) => setEndWeek(event.target.value)}
+              disabled={weekOptionsCatalog.length === 0}
+            >
+              <option value="">请选择结束周</option>
+              {weekOptionsCatalog.map((option) => (
+                <option key={option.key} value={option.value}>
+                  {option.key}（周一 {option.monday}）
+                </option>
+              ))}
+            </select>
             <span className="helper-text">
               {endWeekLabel ? `周一: ${endWeekLabel}` : "请选择结束周"}
             </span>

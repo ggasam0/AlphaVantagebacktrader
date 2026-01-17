@@ -122,6 +122,26 @@ def _week_keys_between(start_dt: datetime.datetime, end_dt: datetime.datetime) -
     return keys
 
 
+def list_week_options(weeks: int = 60) -> List[Dict[str, str]]:
+    if weeks < 1:
+        weeks = 1
+    end_dt = datetime.datetime.now()
+    start_dt = end_dt - datetime.timedelta(weeks=weeks)
+    week_keys = _week_keys_between(start_dt, end_dt)
+    options: List[Dict[str, str]] = []
+    for key in week_keys:
+        year, week = key.split("-W")
+        monday = datetime.date.fromisocalendar(int(year), int(week), 1)
+        options.append(
+            {
+                "key": key,
+                "value": f"{year}-W{int(week):02d}",
+                "monday": monday.isoformat(),
+            }
+        )
+    return options
+
+
 def select_partition_files(
     instrument: str, timeframe: str, start: Optional[str], end: Optional[str]
 ) -> List[Path]:
