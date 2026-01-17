@@ -1,3 +1,4 @@
+# https://github.com/gehtsoft/forex-connect/tree/master
 forexconnect
 pandas
 numpy
