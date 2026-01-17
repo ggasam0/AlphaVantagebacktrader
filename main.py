@@ -2,7 +2,7 @@
 import datetime
 import os
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, List, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -16,7 +16,7 @@ SUPPORTED_TIMEFRAMES = ["m5", "H1"]
 DEFAULT_INSTRUMENT = "XAU/USD"
 
 
-def get_credentials() -> tuple[str | None, str | None]:
+def get_credentials():
     """从环境变量读取用户名和密码。"""
     load_dotenv()
     user = os.getenv('user_name')
@@ -114,7 +114,7 @@ def load_history(filepath: Path) -> pd.DataFrame:
     return df
 
 
-def normalize_candles(df: pd.DataFrame) -> list[dict]:
+def normalize_candles(df: pd.DataFrame) -> List[Dict[str, Any]]:
     candidates = [
         ("BidOpen", "BidHigh", "BidLow", "BidClose"),
         ("Open", "High", "Low", "Close"),
@@ -154,7 +154,7 @@ def normalize_candles(df: pd.DataFrame) -> list[dict]:
     return []
 
 
-def cache_summary(instrument: str, timeframes: Iterable[str]) -> list[dict]:
+def cache_summary(instrument: str, timeframes: Iterable[str]) -> List[Dict[str, Any]]:
     summary = []
     for timeframe in timeframes:
         filepath = cached_file_path(instrument, timeframe)
@@ -186,13 +186,13 @@ def cache_summary(instrument: str, timeframes: Iterable[str]) -> list[dict]:
 
 class DownloadRequest(BaseModel):
     instrument: str = Field(default=DEFAULT_INSTRUMENT)
-    timeframes: list[str] = Field(default_factory=lambda: SUPPORTED_TIMEFRAMES.copy())
+    timeframes: List[str] = Field(default_factory=lambda: SUPPORTED_TIMEFRAMES.copy())
     start: Optional[str] = None
     end: Optional[str] = None
 
 
 class DownloadResponse(BaseModel):
-    saved: list[dict]
+    saved: List[Dict[str, Any]]
 
 
 app = FastAPI(title="Gold Data Cache API")
