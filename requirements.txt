@@ -2,4 +2,6 @@
 forexconnect
 pandas
 numpy
-dotenv
+python-dotenv
+fastapi
+uvicorn
