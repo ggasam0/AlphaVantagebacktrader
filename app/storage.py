@@ -59,7 +59,12 @@ def _week_start(dt: datetime.datetime) -> datetime.datetime:
 
 def _week_key(dt: datetime.datetime) -> str:
     iso = dt.isocalendar()
-    return f"{iso.year:04d}-W{iso.week:02d}"
+    try:
+        year = iso.year
+        week = iso.week
+    except AttributeError:
+        year, week = iso[0], iso[1]
+    return f"{year:04d}-W{week:02d}"
 
 
 def save_history_to_partitions(history, instrument: str, timeframe: str) -> List[str]:
