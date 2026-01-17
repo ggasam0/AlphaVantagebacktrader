@@ -34,7 +34,7 @@ export default function App() {
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
 
-  const timeframes = useMemo(() => ["m1", "H1"], []);
+  const timeframes = useMemo(() => ["m1", "m5", "H1"], []);
   const autoDownloadRef = useRef({ inFlight: false, lastKey: "" });
   const selectedCache = useMemo(
     () => cacheStatus.find((item) => item.timeframe === selectedTimeframe),
@@ -269,7 +269,7 @@ export default function App() {
       <header className="header">
         <div>
           <h1>MT4 风格黄金终端</h1>
-          <p>仅支持 M1 / H1。数据按月分区存储，拖拽图表自动补齐缺失区间。</p>
+          <p>支持 M1 / M5 / H1。数据按月分区存储，拖拽图表自动补齐缺失区间。</p>
         </div>
         <div className="instrument">
           <label>品种</label>
