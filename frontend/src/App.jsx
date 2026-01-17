@@ -172,8 +172,8 @@ export default function App() {
             <label>
               开始时间
               <input
-                type="text"
-                placeholder="例如 2026-01-13 17:51:21"
+                type="datetime-local"
+                step="1"
                 value={start}
                 onChange={(event) => setStart(event.target.value)}
               />
@@ -181,8 +181,8 @@ export default function App() {
             <label>
               结束时间
               <input
-                type="text"
-                placeholder="例如 2026-01-14 18:00:21"
+                type="datetime-local"
+                step="1"
                 value={end}
                 onChange={(event) => setEnd(event.target.value)}
               />
