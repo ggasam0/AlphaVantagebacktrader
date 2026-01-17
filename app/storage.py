@@ -150,6 +150,8 @@ def list_week_partitions(
     if start and end:
         start_dt = parse_datetime(start)
         end_dt = parse_datetime(end)
+        if end_dt < start_dt:
+            start_dt, end_dt = end_dt, start_dt
     else:
         end_dt = datetime.datetime.now()
         start_dt = end_dt - datetime.timedelta(weeks=weeks)

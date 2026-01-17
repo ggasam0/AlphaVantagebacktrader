@@ -60,10 +60,13 @@ export default function App() {
     if (!weekValue) {
       return null;
     }
-    const [yearPart, weekPart] = weekValue.split("-W");
-    const year = Number(yearPart);
-    const week = Number(weekPart);
-    if (!year || !week) {
+    const match = weekValue.match(/^(\d{4})-W?(\d{1,2})$/i);
+    if (!match) {
+      return null;
+    }
+    const year = Number(match[1]);
+    const week = Number(match[2]);
+    if (!year || !week || week < 1 || week > 53) {
       return null;
     }
     const jan4 = new Date(Date.UTC(year, 0, 4));
