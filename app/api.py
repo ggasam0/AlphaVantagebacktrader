@@ -8,12 +8,13 @@ from app.forex import forexconnect_session
 from app.models import DownloadRequest, DownloadResponse
 from app.storage import (
     cache_summary,
-    cached_file_path,
     filter_history,
     load_history,
     normalize_candles,
     process_timeframe,
+    select_partition_files,
     ensure_data_dir,
+    list_partition_files,
 )
 from app.time_utils import parse_datetime
 
@@ -29,10 +30,10 @@ def api_cache(instrument: str = DEFAULT_INSTRUMENT):
 def api_data(timeframe: str, instrument: str = DEFAULT_INSTRUMENT):
     if timeframe not in SUPPORTED_TIMEFRAMES:
         raise HTTPException(status_code=400, detail="Unsupported timeframe")
-    filepath = cached_file_path(instrument, timeframe)
-    if not filepath.exists():
+    files = list_partition_files(instrument, timeframe)
+    if not files:
         raise HTTPException(status_code=404, detail="Cache not found")
-    df = load_history(filepath)
+    df = load_history(files)
     candles = normalize_candles(df)
     return {"instrument": instrument, "timeframe": timeframe, "candles": candles}
 
@@ -46,10 +47,10 @@ def api_preview(
 ):
     if timeframe not in SUPPORTED_TIMEFRAMES:
         raise HTTPException(status_code=400, detail="Unsupported timeframe")
-    filepath = cached_file_path(instrument, timeframe)
-    if not filepath.exists():
+    files = select_partition_files(instrument, timeframe, start, end)
+    if not files:
         raise HTTPException(status_code=404, detail="Cache not found")
-    df = load_history(filepath)
+    df = load_history(files)
     df = filter_history(df, start, end)
     candles = normalize_candles(df)
     return {"instrument": instrument, "timeframe": timeframe, "candles": candles}
@@ -73,7 +74,7 @@ def api_download(payload: DownloadRequest):
             for tf in payload.timeframes:
                 if tf not in SUPPORTED_TIMEFRAMES:
                     continue
-                path = process_timeframe(
+                paths = process_timeframe(
                     fx,
                     payload.instrument,
                     tf,
@@ -81,7 +82,7 @@ def api_download(payload: DownloadRequest):
                     end,
                     out_dir=str(ensure_data_dir()),
                 )
-                saved.append({"timeframe": tf, "path": path})
+                saved.append({"timeframe": tf, "paths": paths})
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return DownloadResponse(saved=saved)
