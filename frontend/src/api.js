@@ -46,6 +46,21 @@ export async function fetchWeeks(timeframe, instrument, { start, end } = {}) {
   return response.json();
 }
 
+export async function fetchWeekOptions(timeframe, instrument, { weeks } = {}) {
+  const url = new URL(`/api/week-options/${timeframe}`, window.location.origin);
+  if (instrument) {
+    url.searchParams.set("instrument", instrument);
+  }
+  if (weeks) {
+    url.searchParams.set("weeks", String(weeks));
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("无法获取周选项列表");
+  }
+  return response.json();
+}
+
 export async function triggerDownload(payload) {
   const response = await fetch("/api/download", {
     method: "POST",
