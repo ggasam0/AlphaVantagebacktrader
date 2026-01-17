@@ -170,6 +170,9 @@ cython_debug/
 
 # Local cache
 cache/
+data/
+frontend/node_modules/
+frontend/dist/
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
