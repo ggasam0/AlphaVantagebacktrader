@@ -15,6 +15,7 @@ from app.storage import (
     select_partition_files,
     ensure_data_dir,
     list_partition_files,
+    list_week_partitions,
 )
 from app.time_utils import parse_datetime
 
@@ -54,6 +55,19 @@ def api_preview(
     df = filter_history(df, start, end)
     candles = normalize_candles(df)
     return {"instrument": instrument, "timeframe": timeframe, "candles": candles, "cached": True}
+
+
+@app.get("/api/weeks/{timeframe}")
+def api_weeks(
+    timeframe: str,
+    instrument: str = DEFAULT_INSTRUMENT,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+):
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        raise HTTPException(status_code=400, detail="Unsupported timeframe")
+    weeks = list_week_partitions(instrument, timeframe, start, end)
+    return {"instrument": instrument, "timeframe": timeframe, "weeks": weeks}
 
 
 @app.post("/api/download", response_model=DownloadResponse)

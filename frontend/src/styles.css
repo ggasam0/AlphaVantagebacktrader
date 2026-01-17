@@ -112,6 +112,40 @@ body {
   gap: 16px;
 }
 
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.empty-state {
+  font-size: 14px;
+  color: #94a3b8;
+}
+
+.week-card {
+  border: 1px solid #1f2a37;
+  background: #0b0f13;
+  border-radius: 10px;
+  padding: 14px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.week-card.active {
+  border-color: #38bdf8;
+  transform: translateY(-2px);
+}
+
+.week-title {
+  font-weight: 600;
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
 .cache-card {
   border: 1px solid #1f2a37;
   background: #0b0f13;
@@ -196,10 +230,27 @@ body {
   min-width: 190px;
 }
 
+.week-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
 .primary {
   background: #38bdf8;
   color: #0b0f13;
   border: none;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary {
+  background: transparent;
+  color: #38bdf8;
+  border: 1px solid #38bdf8;
   padding: 10px 18px;
   border-radius: 8px;
   font-weight: 600;
