@@ -1,0 +1,4 @@
+forexconnect
+pandas
+numpy
+dotenv
