@@ -49,11 +49,11 @@ def api_preview(
         raise HTTPException(status_code=400, detail="Unsupported timeframe")
     files = select_partition_files(instrument, timeframe, start, end)
     if not files:
-        raise HTTPException(status_code=404, detail="Cache not found")
+        return {"instrument": instrument, "timeframe": timeframe, "candles": [], "cached": False}
     df = load_history(files)
     df = filter_history(df, start, end)
     candles = normalize_candles(df)
-    return {"instrument": instrument, "timeframe": timeframe, "candles": candles}
+    return {"instrument": instrument, "timeframe": timeframe, "candles": candles, "cached": True}
 
 
 @app.post("/api/download", response_model=DownloadResponse)
