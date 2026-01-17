@@ -126,15 +126,29 @@ export default function App() {
     try {
       setDownloadStatus("");
       setError("");
+      const missingTimeframes = cacheStatus
+        .filter((item) => !item.cached)
+        .map((item) => item.timeframe);
+      const timeframesToDownload =
+        missingTimeframes.length > 0
+          ? missingTimeframes
+          : cacheStatus.length > 0
+            ? []
+            : [selectedTimeframe];
       const payload = {
         instrument,
-        timeframes: timeframes.length ? timeframes : [selectedTimeframe],
+        timeframes:
+          timeframesToDownload.length > 0
+            ? timeframesToDownload
+            : timeframes.length > 0
+              ? timeframes
+              : [selectedTimeframe],
         start: start || null,
         end: end || null,
       };
-      if (!selectedCache?.cached) {
+      if (timeframesToDownload.length > 0) {
         await triggerDownload(payload);
-        setDownloadStatus("下载完成，缓存已更新。");
+        setDownloadStatus("已下载缺失缓存并刷新。");
         const data = await fetchCacheStatus(instrument);
         setCacheStatus(data.timeframes ?? []);
       } else {
